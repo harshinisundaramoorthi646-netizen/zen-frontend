@@ -1,0 +1,194 @@
+import React, { useState, useEffect, useRef } from 'react';
+import { Phone, PhoneOff, Play, Pause, Clock } from 'lucide-react';
+import { Modal } from '../ui/Modal';
+import { Button } from '../ui/Button';
+import { Lead, CallOutcome } from '../../types';
+import { callService } from '../../services';
+import { usePlatformStore } from '../../store/usePlatformStore';
+import { formatDuration } from '../../utils/formatters';
+import { toast } from 'sonner';
+
+interface CallDrawerModalProps {
+  isOpen: boolean;
+  onClose: () => void;
+  lead: Lead | null;
+  onCallEnded?: () => void;
+}
+
+export const CallDrawerModal: React.FC<CallDrawerModalProps> = ({
+  isOpen,
+  onClose,
+  lead,
+  onCallEnded,
+}) => {
+  const { currentUser } = usePlatformStore();
+  const [isCalling, setIsCalling] = useState(false);
+  const [seconds, setSeconds] = useState(0);
+  const [startTime, setStartTime] = useState<string | null>(null);
+  const [outcome, setOutcome] = useState<CallOutcome>('Interested');
+  const [notes, setNotes] = useState('');
+  const timerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (!isOpen) {
+      setIsCalling(false);
+      setSeconds(0);
+      setStartTime(null);
+      setNotes('');
+      if (timerRef.current) clearInterval(timerRef.current);
+    }
+  }, [isOpen]);
+
+  const startTimer = () => {
+    setIsCalling(true);
+    const nowStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+    setStartTime(nowStr);
+    timerRef.current = setInterval(() => {
+      setSeconds((prev) => prev + 1);
+    }, 1000);
+  };
+
+  const stopTimer = () => {
+    setIsCalling(false);
+    if (timerRef.current) clearInterval(timerRef.current);
+  };
+
+  const handleSaveCall = async () => {
+    if (!lead) return;
+
+    stopTimer();
+    const endTimeStr = new Date().toISOString().replace('T', ' ').substring(0, 19);
+
+    try {
+      await callService.recordCall({
+        leadId: lead.id,
+        memberId: currentUser.id,
+        memberName: currentUser.name,
+        startTime: startTime || new Date().toISOString().replace('T', ' ').substring(0, 19),
+        endTime: endTimeStr,
+        durationSeconds: Math.max(1, seconds),
+        outcome,
+        notes: notes || `Call logged by ${currentUser.name}`,
+        date: new Date().toISOString().split('T')[0],
+      });
+
+      toast.success(`Call logged for ${lead.name}`, {
+        description: `Duration: ${formatDuration(Math.max(1, seconds))} | Outcome: ${outcome}`,
+      });
+
+      onClose();
+      if (onCallEnded) onCallEnded();
+    } catch {
+      toast.error('Failed to log call.');
+    }
+  };
+
+  if (!lead) return null;
+
+  return (
+    <Modal
+      isOpen={isOpen}
+      onClose={onClose}
+      title={`📞 Live Call Workspace — ${lead.name}`}
+      description={`${lead.company} | Area: ${lead.area} | Phone: ${lead.phone || lead.email}`}
+      maxWidth="lg"
+    >
+      <div className="space-y-6 pt-2">
+        {/* Live Call Timer Banner */}
+        <div className="flex flex-col items-center justify-center p-6 rounded-2xl bg-slate-900 text-white shadow-lg space-y-3">
+          <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-widest text-brand-400">
+            <Clock className="h-4 w-4 animate-spin text-brand-400" />
+            <span>{isCalling ? 'Live Call In Progress' : seconds > 0 ? 'Call Paused / Ended' : 'Ready to Call'}</span>
+          </div>
+
+          <div className="text-4xl sm:text-5xl font-mono font-bold tracking-wider text-emerald-400">
+            {formatDuration(seconds)}
+          </div>
+
+          <div className="flex items-center gap-3 pt-2">
+            {!isCalling ? (
+              <Button
+                variant="success"
+                size="lg"
+                onClick={startTimer}
+                className="font-bold px-6 shadow-md"
+              >
+                <Phone className="h-5 w-5 mr-1" />
+                {seconds > 0 ? 'Resume Call' : 'Start Call'}
+              </Button>
+            ) : (
+              <Button
+                variant="danger"
+                size="lg"
+                onClick={stopTimer}
+                className="font-bold px-6 shadow-md"
+              >
+                <PhoneOff className="h-5 w-5 mr-1" />
+                Pause / Stop Call
+              </Button>
+            )}
+          </div>
+        </div>
+
+        {/* Lead Details Card */}
+        <div className="bg-slate-50 rounded-xl p-4 border border-slate-200 text-xs space-y-2">
+          <div className="flex justify-between">
+            <span className="text-slate-500 font-semibold">Lead ID:</span>
+            <span className="font-bold text-brand-700">{lead.id}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500 font-semibold">Company:</span>
+            <span className="font-bold text-slate-900">{lead.company}</span>
+          </div>
+          <div className="flex justify-between">
+            <span className="text-slate-500 font-semibold">Generated By:</span>
+            <span className="font-medium text-slate-800">{lead.generatedByName}</span>
+          </div>
+        </div>
+
+        {/* Outcome Selector */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+            Call Outcome *
+          </label>
+          <select
+            value={outcome}
+            onChange={(e) => setOutcome(e.target.value as CallOutcome)}
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 font-semibold focus:border-brand-500 focus:outline-none"
+          >
+            <option value="Interested">Interested</option>
+            <option value="Selected">Selected (Client Converted)</option>
+            <option value="Waiting">Waiting / Decision Pending</option>
+            <option value="Call Later">Call Later / Reschedule</option>
+            <option value="No Response">No Response / Unreachable</option>
+            <option value="Not Interested">Not Interested</option>
+            <option value="Rejected">Rejected</option>
+          </select>
+        </div>
+
+        {/* Call Notes */}
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-bold uppercase tracking-wider text-slate-700">
+            Call Discussion Notes & Client Requirements *
+          </label>
+          <textarea
+            rows={4}
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            placeholder="Key discussion points, budget expectations, timeline, feature requests..."
+            className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900 focus:border-brand-500 focus:outline-none"
+          />
+        </div>
+
+        <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button variant="primary" onClick={handleSaveCall}>
+            Save & Log Call
+          </Button>
+        </div>
+      </div>
+    </Modal>
+  );
+};
